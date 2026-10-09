@@ -8,7 +8,7 @@
 :root{
   --bg:#f4f4f1; --panel:#ffffff; --ink:#1d1d1b; --muted:#6b6b66; --line:#dddcd6;
   --accent:#2f5d8a; --accent-ink:#ffffff; --accent-soft:#e3ebf3; --warn:#c0532f; --stage:#262624;
-  --perim:#1f78ff; --centroid:#ff8c00; --hole:#4f8fd6; --other:#e88c73;
+  --perim:#1f78ff; --scale:#d61f8f; --centroid:#ff8c00; --hole:#4f8fd6; --other:#e88c73;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
@@ -58,6 +58,11 @@ label.check input{width:20px;height:20px;accent-color:var(--accent)}
 .mrow .mval{justify-self:end;font-variant-numeric:tabular-nums}
 button.mrow[aria-pressed="false"]{opacity:.55}
 button.mrow[aria-pressed="false"] .sw{background:transparent !important;outline:2px solid currentColor;outline-offset:-2px}
+.row input[type=text]{width:6.5em;font:inherit;font-size:16px;padding:.5rem .6rem;border:1px solid var(--line);border-radius:8px;min-height:44px}
+.row label{font-size:.95rem}
+#toolbar button{padding:.6rem .7rem}
+.copied{font-size:.85rem;color:var(--accent);margin:.5rem 0 0;min-height:1.2em}
+.wide{grid-column:1 / -1}
 </style>
 </head>
 <body>
@@ -67,6 +72,7 @@ button.mrow[aria-pressed="false"] .sw{background:transparent !important;outline:
 </div>
 <div id="toolbar">
   <button id="undo" disabled>↶ Zurück</button>
+  <button id="redo" disabled aria-label="Wiederholen">Vor ↷</button>
   <button id="compare" disabled>Original ◐</button>
   <div class="info" id="info"></div>
 </div>
@@ -82,7 +88,7 @@ const css = name => getComputedStyle(document.documentElement).getPropertyValue(
 
 // Zustand: Stapel von Bildern (für "Zurück"). Graustufen: Werte 0..255.
 // Binärbild (Maske): 0 = Objekt (schwarz), 255 = Hintergrund (weiß).
-const S = { stack: [], orig: null, origRot: null, tool: null, comparing: false };
+const S = { stack: [], redo: [], orig: null, origRot: null, tool: null, comparing: false, scale: null };
 const curState = () => S.stack[S.stack.length - 1];
 const origFor = cur => cur.rot ? S.origRot : S.orig;
 
@@ -120,6 +126,8 @@ function paintOverlay(){
 function redraw(){
   const cur = curState(); if (!cur) return;
   view.style.display = 'block'; $('#placeholder').style.display = 'none';
+  const sm = !!(S.tool && S.tool.scaleMode);
+  view.style.touchAction = sm ? 'none' : ''; view.style.cursor = sm ? 'crosshair' : '';
   if (S.comparing) return paintOverlay();
   const t = S.tool;
   if (t && t.name === 'result') return drawResult(t);
@@ -152,7 +160,7 @@ async function loadFile(file){
   // gedrehte Kopie des Farbbilds (für Vergleich und Ergebnis nach 180°-Drehung)
   const rot = new ImageData(w, h), r = rot.data, n = w * h;
   for (let i = 0; i < n; i++){ const a = i*4, b = (n-1-i)*4; r[b]=d[a]; r[b+1]=d[a+1]; r[b+2]=d[a+2]; r[b+3]=255; }
-  S.orig = id; S.origRot = rot; S.tool = null;
+  S.orig = id; S.origRot = rot; S.tool = null; S.redo = []; S.scale = null;
   S.stack = [{ px: grey, w, h, binary: false, rot: false, label: 'Graustufen' }];
   refresh();
 }
@@ -255,12 +263,13 @@ function fillHoles(px, w, h){
 function measure(cur){
   const { px, w, h } = cur, o = origFor(cur).data;
   const isObj = (x, y) => x >= 0 && y >= 0 && x < w && y < h && px[y*w+x] === 0;
-  let area = 0, sx = 0, sy = 0, n0 = 0, n90 = 0, n45 = 0, n135 = 0;
+  let touches = false, area = 0, sx = 0, sy = 0, n0 = 0, n90 = 0, n45 = 0, n135 = 0;
   const boundary = [];
   const cut = new Uint8ClampedArray(w * h * 4).fill(255);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
     const i = y*w + x; if (px[i] !== 0) continue;
     area++; sx += x; sy += y;
+    if (x === 0 || y === 0 || x === w-1 || y === h-1) touches = true;
     const j = i*4; cut[j] = o[j]; cut[j+1] = o[j+1]; cut[j+2] = o[j+2];
     // Übergänge Objekt → Hintergrund in 4 Richtungen (je von der Objektseite gezählt)
     const l = !isObj(x-1, y), r = !isObj(x+1, y), u = !isObj(x, y-1), d = !isObj(x, y+1);
@@ -272,11 +281,14 @@ function measure(cur){
   // Cauchy-Crofton-Schätzer: P ≈ π/8 · (n0 + n90 + (n45 + n135)/√2)
   const perim = Math.PI / 8 * (n0 + n90 + (n45 + n135) / Math.SQRT2);
   const comps = area ? components(px, w, h).n : 0;
-  return { area, frac: area / (w*h), perim, cx: area ? sx/area : 0, cy: area ? sy/area : 0, boundary, cut, comps };
+  const sph = perim ? 4 * Math.PI * area / (perim * perim) : 0;
+  return { touches, sph, area, frac: area / (w*h), perim, cx: area ? sx/area : 0, cy: area ? sy/area : 0, boundary, cut, comps };
 }
 
 const countObj = px => { let c = 0; for (let i = 0; i < px.length; i++) if (px[i] === 0) c++; return c; };
 const fmt = v => Math.round(v).toLocaleString('de-AT');
+const num = (v, d) => v.toLocaleString('de-AT', { minimumFractionDigits: d, maximumFractionDigits: d });
+const smart = v => num(v, v >= 100 ? 0 : v >= 10 ? 1 : 2);
 const pct = (a, b) => (100 * a / b).toFixed(1).replace('.', ',') + ' %';
 const rgb = hex => { const n = parseInt(hex.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
 
@@ -314,7 +326,22 @@ function computePreview(){
 }
 
 /* ---------- Ergebnis zeichnen ---------- */
+function drawScale(s){
+  const cur = curState(), o = origFor(cur); paintRGBA(o.data, o.width, o.height);
+  const r = view.getBoundingClientRect(), k = r.width ? view.width / r.width : 1;
+  vctx.lineCap = 'round';
+  const line = () => { vctx.beginPath(); vctx.moveTo(s.a.x, s.a.y); vctx.lineTo(s.b.x, s.b.y); vctx.stroke(); };
+  vctx.strokeStyle = '#fff'; vctx.lineWidth = 6*k; line();
+  vctx.strokeStyle = css('--scale'); vctx.lineWidth = 3*k; line();
+  for (const p of [s.a, s.b]){
+    vctx.beginPath(); vctx.arc(p.x, p.y, 14*k, 0, 2*Math.PI);
+    vctx.strokeStyle = '#fff'; vctx.lineWidth = 5*k; vctx.stroke();
+    vctx.strokeStyle = css('--scale'); vctx.lineWidth = 2.5*k; vctx.stroke();
+    vctx.beginPath(); vctx.arc(p.x, p.y, 2.2*k, 0, 2*Math.PI); vctx.fillStyle = css('--scale'); vctx.fill();
+  }
+}
 function drawResult(t){
+  if (t.scaleMode) return drawScale(t.scaleMode);
   const cur = curState(), m = t.m, { w, h } = cur;
   paintRGBA(m.cut, w, h);
   if (!m.area) return;
@@ -333,13 +360,18 @@ function drawResult(t){
 }
 
 /* ---------- Aktionen ---------- */
-function push(entry){ S.stack.push(entry); S.tool = null; refresh(); }
+function push(entry){ S.stack.push(entry); S.redo = []; S.tool = null; refresh(); }
 function closeTool(){ S.tool = null; refresh(); }
 function refresh(){ renderPanel(); redraw(); updateToolbar(); }
 
 $('#undo').addEventListener('click', () => {
   S.tool = null;
-  if (S.stack.length > 1) S.stack.pop();
+  if (S.stack.length > 1) S.redo.push(S.stack.pop());
+  refresh();
+});
+$('#redo').addEventListener('click', () => {
+  S.tool = null;
+  if (S.redo.length) S.stack.push(S.redo.pop());
   refresh();
 });
 const cmp = $('#compare');
@@ -352,6 +384,7 @@ cmp.addEventListener('contextmenu', e => e.preventDefault());
 function updateToolbar(){
   const cur = curState();
   $('#undo').disabled = S.stack.length <= 1;
+  $('#redo').disabled = !S.redo.length;
   $('#compare').disabled = !cur;
   $('#info').innerHTML = cur ? `${cur.binary ? 'binär' : 'Graustufen'}<br>${cur.w} × ${cur.h} px` : '';
 }
@@ -412,7 +445,7 @@ function renderPanel(){
     }));
     return;
   }
-  ({ threshold: renderThreshold, morph: renderMorph, cc: renderCC, fill: renderFill, result: renderResult })[t.name]();
+  ({ threshold: renderThreshold, morph: renderMorph, cc: renderCC, fill: renderFill, result: () => t.scaleMode ? renderScale() : renderResult() })[t.name]();
 }
 
 function actionsHTML(){ return `<div class="actions"><button id="cancel">Abbrechen</button><button class="primary" id="apply">Anwenden</button></div>`; }
@@ -530,31 +563,125 @@ function renderFill(){
 
 /* Ergebnis */
 function renderResult(){
-  const t = S.tool, m = t.m, cur = curState();
+  const t = S.tool, m = t.m, cur = curState(), sc = S.scale, L = sc ? sc.mmPerPx : 0;
   if (!m.area){
     setPanel(`<h2>Ergebnis</h2><p class="hint warn">Die Maske enthält keine Objektpixel.</p>
       <div class="actions"><button id="back" class="wide">← Zur Bearbeitung</button></div>`);
     $('#back').addEventListener('click', closeTool); return;
   }
+  const area = sc ? `${smart(m.area * L * L)} mm²` : `${fmt(m.area)} px`;
+  const per  = sc ? `≈ ${smart(m.perim * L)} mm` : `≈ ${fmt(m.perim)} px`;
+  const cen  = sc ? `x = ${smart(m.cx * L)}, y = ${smart(m.cy * L)} mm` : `x = ${fmt(m.cx)}, y = ${fmt(m.cy)}`;
   setPanel(`<h2>Ergebnis</h2>
     <div class="meas">
       <div class="mrow"><i class="sw" style="background:#3a3a38"></i><span>Fläche</span>
-        <span class="mval">${fmt(m.area)} px · ${pct(m.area, cur.w * cur.h)}</span></div>
+        <span class="mval">${area} · ${pct(m.area, cur.w * cur.h)}</span></div>
       <button class="mrow" id="mP" aria-pressed="${t.showP}"><i class="sw" style="background:var(--perim)"></i><span>Umfang</span>
-        <span class="mval">≈ ${fmt(m.perim)} px</span></button>
+        <span class="mval">${per}</span></button>
       <button class="mrow" id="mC" aria-pressed="${t.showC}"><i class="sw" style="background:var(--centroid)"></i><span>Schwerpunkt</span>
-        <span class="mval">x = ${fmt(m.cx)}, y = ${fmt(m.cy)}</span></button>
+        <span class="mval">${cen}</span></button>
+      <div class="mrow"><i></i><span>Sphärizität</span><span class="mval">${num(m.sph, 2)}</span></div>
     </div>
-    ${m.comps > 1 ? `<p class="hint warn">Die Maske besteht aus ${m.comps} Teilen; alle Werte gelten für alle Teile zusammen. Tipp: vorher „Größte Komponente“ anwenden.</p>` : ''}
-    <p class="hint">Fläche = Anzahl der Objektpixel. Umfang = blaue Randlinie, geschätzt aus den Objekt/Hintergrund-Übergängen in vier Richtungen (Cauchy-Crofton). Schwerpunkt = Mittelwert der Pixelkoordinaten (Ursprung links oben). Antippen blendet die Markierung ein oder aus. Alle Werte in Pixeln des verkleinerten Bildes.</p>
-    <div class="actions"><button id="back">← Bearbeiten</button><button class="primary" id="save">Ansicht speichern</button></div>`);
+    ${m.touches ? `<p class="hint warn">⚠ Das Objekt berührt den Bildrand. Vermutlich liegt ein Teil außerhalb des Fotos, dann sind Fläche, Umfang, Schwerpunkt und Sphärizität verfälscht. Tipp: mit etwas Abstand zum Rand fotografieren.</p>` : ''}
+    ${m.comps > 1 ? `<p class="hint warn">⚠ Die Maske besteht aus ${m.comps} Teilen; alle Werte gelten für alle Teile zusammen. Tipp: vorher „Größte Komponente“ anwenden.</p>` : ''}
+    <div class="actions">
+      <button id="scale">${sc ? 'Maßstab ändern' : 'Maßstab setzen…'}</button>
+      <button id="copy">Werte kopieren</button>
+      <button id="back">← Bearbeiten</button>
+      <button class="primary" id="save">Ansicht speichern</button>
+    </div>
+    <p class="copied" id="copied"></p>
+    <p class="hint">${sc ? `Maßstab: 1 mm ≙ ${num(1 / L, 2)} px.` : 'Kein Maßstab gesetzt: alle Werte in Pixeln des verkleinerten Bildes.'}
+      Umfang und Schwerpunkt antippen blendet ihre Markierung ein oder aus.</p>
+    <p class="hint"><b>Umfang:</b> geschätzt aus den Objekt/Hintergrund-Übergängen in vier Richtungen (Cauchy-Crofton).
+      <b>Schwerpunkt:</b> Mittelwert der Pixelkoordinaten, Ursprung links oben.
+      <b>Sphärizität</b> = 4π · Fläche / Umfang²: 1 für einen perfekten Kreis, kleiner für längliche oder zerklüftete Formen.</p>`);
   const toggle = (id, key) => $(id).addEventListener('click', e => {
     t[key] = !t[key]; e.currentTarget.setAttribute('aria-pressed', t[key]); redraw();
   });
   toggle('#mP', 'showP'); toggle('#mC', 'showC');
   $('#back').addEventListener('click', closeTool);
   $('#save').addEventListener('click', () => save('ergebnis.png'));
+  $('#scale').addEventListener('click', openScale);
+  $('#copy').addEventListener('click', async () => {
+    const f = (v, d) => v.toFixed(d).replace('.', ',');
+    const vals = sc
+      ? [f(m.area * L * L, 2), f(m.perim * L, 2), f(m.sph, 3), f(m.cx * L, 2), f(m.cy * L, 2), 'mm']
+      : [f(m.area, 0), f(m.perim, 1), f(m.sph, 3), f(m.cx, 1), f(m.cy, 1), 'px'];
+    const text = vals.join('\t');
+    const out = $('#copied');
+    if (await copyText(text)) out.textContent = '✓ Kopiert (Tab-getrennt): Fläche · Umfang · Sphärizität · x · y · Einheit';
+    else out.textContent = 'Kopieren nicht möglich, bitte von Hand abschreiben: ' + vals.join(' | ');
+  });
 }
+async function copyText(s){
+  try { await navigator.clipboard.writeText(s); return true; } catch (e) {}
+  const ta = document.createElement('textarea');
+  ta.value = s; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select(); let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  ta.remove(); return ok;
+}
+
+/* Maßstab */
+const parseLen = v => parseFloat(String(v).replace(',', '.'));
+function openScale(){
+  const t = S.tool, cur = curState(), sc = S.scale;
+  let a, b;
+  if (sc){
+    a = { ...sc.a }; b = { ...sc.b };
+    if (sc.rot !== cur.rot){ a = { x: cur.w - a.x, y: cur.h - a.y }; b = { x: cur.w - b.x, y: cur.h - b.y }; }
+  } else { a = { x: cur.w * .3, y: cur.h * .5 }; b = { x: cur.w * .7, y: cur.h * .5 }; }
+  t.scaleMode = { a, b, mm: sc ? sc.mm : '' };
+  refresh();
+}
+function renderScale(){
+  const t = S.tool, s = t.scaleMode;
+  setPanel(`<h2>Maßstab setzen</h2>
+    <p class="hint" style="margin-top:0">Ziehe die beiden Punkte an die Enden einer Strecke, deren Länge du kennst (z. B. 5 cm auf einem Lineal), und gib diese Länge ein. Tipp: etwas neben dem Punkt ansetzen, dann verdeckt der Finger ihn nicht.</p>
+    <div class="readout">Strecke im Bild: <b id="spx"></b> px</div>
+    <div class="row"><label for="smm">Wirkliche Länge:</label>
+      <input id="smm" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 50" value="${s.mm}"><span>mm</span></div>
+    <div class="readout" id="sres"></div>
+    <div class="actions">
+      ${S.scale ? '<button id="sdel" class="wide">Maßstab entfernen</button>' : ''}
+      <button id="cancel">Abbrechen</button><button class="primary" id="apply">Übernehmen</button>
+    </div>`);
+  $('#smm').addEventListener('input', e => { s.mm = e.target.value; updateScale(); });
+  $('#cancel').addEventListener('click', () => { t.scaleMode = null; refresh(); });
+  $('#apply').addEventListener('click', () => {
+    const len = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y), mm = parseLen(s.mm);
+    if (!(mm > 0) || len < 5) return;
+    S.scale = { mmPerPx: mm / len, a: { ...s.a }, b: { ...s.b }, rot: curState().rot, mm: s.mm };
+    t.scaleMode = null; refresh();
+  });
+  if (S.scale) $('#sdel').addEventListener('click', () => { S.scale = null; t.scaleMode = null; refresh(); });
+  updateScale();
+}
+function updateScale(){
+  const s = S.tool && S.tool.scaleMode; if (!s || !$('#spx')) return;
+  const len = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y), mm = parseLen(s.mm), ok = mm > 0 && len >= 5;
+  $('#spx').textContent = num(len, 1);
+  $('#sres').textContent = len < 5 ? 'Die Punkte liegen zu nah beieinander.'
+    : ok ? `→ 1 mm ≙ ${num(len / mm, 2)} px` : 'Bitte die Länge in mm eingeben.';
+  $('#apply').disabled = !ok;
+}
+// Endpunkte mit dem Finger ziehen (immer den näheren Punkt, mit Abstand zum Finger)
+let drag = null;
+const toImg = e => { const r = view.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * view.width, y: (e.clientY - r.top) / r.height * view.height }; };
+view.addEventListener('pointerdown', e => {
+  const s = S.tool && S.tool.scaleMode; if (!s || S.comparing) return;
+  e.preventDefault(); const p = toImg(e);
+  const h = Math.hypot(s.a.x - p.x, s.a.y - p.y) <= Math.hypot(s.b.x - p.x, s.b.y - p.y) ? s.a : s.b;
+  drag = { h, dx: h.x - p.x, dy: h.y - p.y }; view.setPointerCapture(e.pointerId);
+});
+view.addEventListener('pointermove', e => {
+  if (!drag || !(S.tool && S.tool.scaleMode)) return;
+  const p = toImg(e), cur = curState();
+  drag.h.x = Math.max(0, Math.min(cur.w, p.x + drag.dx)); drag.h.y = Math.max(0, Math.min(cur.h, p.y + drag.dy));
+  redraw(); updateScale();
+});
+['pointerup', 'pointercancel'].forEach(ev => view.addEventListener(ev, () => { drag = null; }));
 
 function updateReadouts(){
   const t = S.tool, cur = curState(); if (!t || !cur) return;
