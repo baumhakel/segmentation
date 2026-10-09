@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bildsegmentierung</title>
+<style>
+:root{
+  --bg:#f4f4f1; --panel:#ffffff; --ink:#1d1d1b; --muted:#6b6b66; --line:#dddcd6;
+  --accent:#2f5d8a; --accent-ink:#ffffff; --accent-soft:#e3ebf3; --warn:#c0532f; --stage:#262624;
+  --perim:#1f78ff; --centroid:#ff8c00; --hole:#4f8fd6; --other:#e88c73;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+body{display:grid;grid-template-rows:minmax(160px,min(48dvh,76vw)) auto minmax(0,1fr);height:100dvh;max-width:900px;margin:0 auto;background:var(--panel)}
+#stage{background:var(--stage);display:flex;align-items:center;justify-content:center;overflow:hidden}
+#view{max-width:100%;max-height:100%;display:none}
+#placeholder{color:#a9a8a2;text-align:center;padding:1rem;font-size:.95rem}
+#toolbar{display:flex;gap:.5rem;padding:.5rem .75rem;border-bottom:1px solid var(--line);align-items:center}
+#toolbar .info{margin-left:auto;color:var(--muted);font-size:.8rem;text-align:right;line-height:1.25}
+#panel{overflow-y:auto;padding:.6rem .75rem calc(1.25rem + env(safe-area-inset-bottom))}
+h2{font-size:1.05rem;margin:.1rem 0 .6rem}
+button,.btn{font:inherit;font-size:.95rem;border:1px solid var(--line);background:#fafaf8;color:var(--ink);border-radius:10px;
+  padding:.6rem .85rem;min-height:44px;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
+  display:inline-flex;align-items:center;justify-content:center;text-align:center;white-space:nowrap}
+button:disabled{opacity:.38;cursor:default}
+button.primary,.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.grid .wide{grid-column:1 / -1}
+.row{display:flex;gap:.5rem;align-items:center;margin:.5rem 0}
+.row input[type=range]{flex:1;min-width:0;height:32px;accent-color:var(--accent)}
+.seg{display:grid;grid-template-columns:repeat(4,1fr);gap:.35rem;margin-bottom:.5rem}
+.seg button{padding:.5rem .2rem;font-size:.85rem}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:.75rem}
+.hint{color:var(--muted);font-size:.88rem;margin:.6rem 0}
+.hint.warn{color:var(--warn)}
+.readout{font-size:.92rem;margin:.25rem 0}
+.history{font-size:.8rem;color:var(--muted);border-top:1px solid var(--line);padding-top:.5rem;margin-top:.75rem}
+#hist{width:100%;height:100px;display:block;touch-action:none;border:1px solid var(--line);border-radius:8px;background:#fcfcfa}
+.legend{display:flex;gap:.9rem;flex-wrap:wrap;font-size:.8rem;color:var(--muted);margin:.35rem 0}
+.sw{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.3em;flex:none}
+label.check{display:inline-flex;gap:.4rem;align-items:center;font-size:.9rem;margin-left:auto}
+label.check input{width:20px;height:20px;accent-color:var(--accent)}
+.se{display:flex;gap:.75rem;align-items:center;font-size:.85rem;color:var(--muted)}
+#se{image-rendering:pixelated;border:1px solid var(--line);background:#fff}
+#file{display:none}
+.start{display:flex;flex-direction:column;gap:.75rem}
+.start .btn{min-height:56px;font-size:1.05rem}
+.steps{display:flex;gap:.25rem;list-style:none;padding:0;margin:0 0 .65rem;font-size:.74rem}
+.steps li{flex:1;text-align:center;padding:.28rem .15rem;border-radius:6px;background:#efeee9;color:var(--muted);white-space:nowrap}
+.steps li.now{background:var(--accent);color:#fff;font-weight:600}
+.steps li.done{background:var(--accent-soft);color:var(--accent)}
+.meas{display:flex;flex-direction:column;gap:.4rem}
+.mrow{display:grid;grid-template-columns:1.1em 6.6em 1fr;align-items:center;justify-items:start;text-align:left;width:100%;
+  padding:.55rem .7rem;border:1px solid var(--line);border-radius:10px;min-height:44px;font-size:.95rem;background:#fafaf8}
+.mrow .mval{justify-self:end;font-variant-numeric:tabular-nums}
+button.mrow[aria-pressed="false"]{opacity:.55}
+button.mrow[aria-pressed="false"] .sw{background:transparent !important;outline:2px solid currentColor;outline-offset:-2px}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="view"></canvas>
+  <div id="placeholder">Noch kein Bild.<br>Unten ein Foto aufnehmen oder auswählen.</div>
+</div>
+<div id="toolbar">
+  <button id="undo" disabled>↶ Zurück</button>
+  <button id="compare" disabled>Original ◐</button>
+  <div class="info" id="info"></div>
+</div>
+<div id="panel"></div>
+<input type="file" id="file" accept="image/*">
+
+<script>
+(() => {
+"use strict";
+const MAX_SIDE = 800;           // längste Bildseite nach dem Verkleinern
+const $ = s => document.querySelector(s);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// Zustand: Stapel von Bildern (für "Zurück"). Graustufen: Werte 0..255.
+// Binärbild (Maske): 0 = Objekt (schwarz), 255 = Hintergrund (weiß).
+const S = { stack: [], orig: null, origRot: null, tool: null, comparing: false };
+const curState = () => S.stack[S.stack.length - 1];
+const origFor = cur => cur.rot ? S.origRot : S.orig;
+
+/* ---------- Anzeige ---------- */
+const view = $('#view'), vctx = view.getContext('2d');
+let vImg = null;
+function ensureSize(w, h){
+  if (view.width !== w || view.height !== h || !vImg){
+    view.width = w; view.height = h; vImg = vctx.createImageData(w, h);
+  }
+}
+function paintGrey(px, w, h){
+  ensureSize(w, h); const d = vImg.data;
+  for (let i = 0, j = 0; i < px.length; i++, j += 4){ const v = px[i]; d[j]=v; d[j+1]=v; d[j+2]=v; d[j+3]=255; }
+  vctx.putImageData(vImg, 0, 0);
+}
+function paintRGBA(buf, w, h){ ensureSize(w, h); vImg.data.set(buf); vctx.putImageData(vImg, 0, 0); }
+
+// Maske, die "jetzt" gilt: Vorschau des offenen Werkzeugs, sonst das aktuelle Binärbild
+function currentMask(){
+  const t = S.tool, cur = curState();
+  if (t && t.mask) return t.mask;
+  return cur && cur.binary ? cur.px : null;
+}
+// Originalfoto, Maske halbtransparent rot darüber
+function paintOverlay(){
+  const cur = curState(), o = origFor(cur), mask = currentMask();
+  const buf = new Uint8ClampedArray(o.data);
+  if (mask) for (let i = 0, j = 0; i < mask.length; i++, j += 4){
+    if (mask[i] === 0){ buf[j] = buf[j]*0.45 + 140; buf[j+1] = buf[j+1]*0.45; buf[j+2] = buf[j+2]*0.45; }
+  }
+  paintRGBA(buf, o.width, o.height);
+}
+
+function redraw(){
+  const cur = curState(); if (!cur) return;
+  view.style.display = 'block'; $('#placeholder').style.display = 'none';
+  if (S.comparing) return paintOverlay();
+  const t = S.tool;
+  if (t && t.name === 'result') return drawResult(t);
+  if (t && t.rgba) paintRGBA(t.rgba, cur.w, cur.h);
+  else if (t && t.mask) paintGrey(t.mask, cur.w, cur.h);
+  else paintGrey(cur.px, cur.w, cur.h);
+}
+
+let pending = false;
+function schedule(){
+  if (pending) return; pending = true;
+  requestAnimationFrame(() => { pending = false; computePreview(); redraw(); updateReadouts(); });
+}
+
+/* ---------- Bild laden ---------- */
+async function loadFile(file){
+  let src;
+  try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch (e) {
+    src = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = URL.createObjectURL(file); });
+  }
+  const sw = src.width || src.naturalWidth, sh = src.height || src.naturalHeight;
+  const s = Math.min(1, MAX_SIDE / Math.max(sw, sh));
+  const w = Math.max(1, Math.round(sw * s)), h = Math.max(1, Math.round(sh * s));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(src, 0, 0, w, h);
+  const id = ctx.getImageData(0, 0, w, h), d = id.data;
+  const grey = new Uint8Array(w * h);
+  for (let i = 0, j = 0; i < grey.length; i++, j += 4) grey[i] = Math.round(0.299*d[j] + 0.587*d[j+1] + 0.114*d[j+2]);
+  // gedrehte Kopie des Farbbilds (für Vergleich und Ergebnis nach 180°-Drehung)
+  const rot = new ImageData(w, h), r = rot.data, n = w * h;
+  for (let i = 0; i < n; i++){ const a = i*4, b = (n-1-i)*4; r[b]=d[a]; r[b+1]=d[a+1]; r[b+2]=d[a+2]; r[b+3]=255; }
+  S.orig = id; S.origRot = rot; S.tool = null;
+  S.stack = [{ px: grey, w, h, binary: false, rot: false, label: 'Graustufen' }];
+  refresh();
+}
+$('#file').addEventListener('change', e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (f) loadFile(f).catch(() => alert('Das Bild konnte nicht geladen werden.'));
+});
+
+/* ---------- Bildverarbeitung ---------- */
+function histogram(px){ const h = new Uint32Array(256); for (let i = 0; i < px.length; i++) h[px[i]]++; return h; }
+
+function otsu(hist, total){
+  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sumB = 0, wB = 0, best = -1, bestT = 127;
+  for (let t = 0; t < 256; t++){
+    wB += hist[t]; sumB += t * hist[t];
+    if (!wB) continue; const wF = total - wB; if (!wF) break;
+    const mB = sumB / wB, mF = (sum - sumB) / wF, v = wB * wF * (mB - mF) ** 2;
+    if (v > best){ best = v; bestT = t; }
+  }
+  return bestT;
+}
+
+// Binäre Erosion/Dilatation mit Kreisscheibe vom Radius r (Zeilen-Präfixsummen).
+// Pixel außerhalb des Bildes werden ignoriert.
+function morph(src, w, h, r, erode){
+  const W = w + 1, pre = new Int32Array(W * h);
+  for (let y = 0; y < h; y++){ let s = 0; for (let x = 0; x < w; x++){ s += src[y*w+x] === 0 ? 1 : 0; pre[y*W+x+1] = s; } }
+  const half = []; for (let dy = -r; dy <= r; dy++) half.push(Math.floor(Math.sqrt(r*r - dy*dy)));
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++){
+    for (let x = 0; x < w; x++){
+      let res = erode;
+      for (let k = 0; k < half.length; k++){
+        const yy = y + k - r; if (yy < 0 || yy >= h) continue;
+        const a = Math.max(0, x - half[k]), b = Math.min(w - 1, x + half[k]);
+        const cnt = pre[yy*W+b+1] - pre[yy*W+a];
+        if (erode){ if (cnt !== b - a + 1){ res = false; break; } }
+        else if (cnt > 0){ res = true; break; }
+      }
+      out[y*w+x] = res ? 0 : 255;
+    }
+  }
+  return out;
+}
+function applyMorph(px, w, h, op, r){
+  if (op === 'erode')  return morph(px, w, h, r, true);
+  if (op === 'dilate') return morph(px, w, h, r, false);
+  if (op === 'open')   return morph(morph(px, w, h, r, true), w, h, r, false);
+  return morph(morph(px, w, h, r, false), w, h, r, true);   // close
+}
+
+// Zusammenhangskomponenten (8er-Nachbarschaft) der Objektpixel
+function components(px, w, h){
+  const lab = new Int32Array(w * h), q = new Int32Array(w * h), sizes = [0];
+  let n = 0;
+  for (let i = 0; i < px.length; i++){
+    if (px[i] !== 0 || lab[i]) continue;
+    n++; let head = 0, tail = 0; q[tail++] = i; lab[i] = n;
+    while (head < tail){
+      const p = q[head++], x = p % w, y = (p / w) | 0;
+      for (let dy = -1; dy <= 1; dy++){ const yy = y + dy; if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++){ const xx = x + dx; if (xx < 0 || xx >= w) continue;
+          const nb = yy*w + xx; if (px[nb] === 0 && !lab[nb]){ lab[nb] = n; q[tail++] = nb; } } }
+    }
+    sizes.push(tail);
+  }
+  let best = 0; for (let k = 1; k <= n; k++) if (!best || sizes[k] > sizes[best]) best = k;
+  return { lab, n, sizes, best };
+}
+
+// Löcher = Hintergrundbereiche (4er-Nachbarschaft), die den Bildrand nicht berühren
+function fillHoles(px, w, h){
+  const reach = new Uint8Array(w * h), q = new Int32Array(w * h);
+  let head = 0, tail = 0;
+  const seed = i => { if (px[i] !== 0 && !reach[i]){ reach[i] = 1; q[tail++] = i; } };
+  for (let x = 0; x < w; x++){ seed(x); seed((h-1)*w + x); }
+  for (let y = 0; y < h; y++){ seed(y*w); seed(y*w + w - 1); }
+  while (head < tail){
+    const p = q[head++], x = p % w, y = (p / w) | 0;
+    if (x > 0) seed(p-1); if (x < w-1) seed(p+1); if (y > 0) seed(p-w); if (y < h-1) seed(p+w);
+  }
+  const mask = px.slice(), seen = new Uint8Array(w * h);
+  let holes = 0, holePx = 0;
+  for (let i = 0; i < px.length; i++){
+    if (px[i] === 0 || reach[i]) continue;
+    mask[i] = 0; holePx++;
+    if (seen[i]) continue;
+    holes++; head = 0; tail = 0; q[tail++] = i; seen[i] = 1;
+    while (head < tail){
+      const p = q[head++], x = p % w, y = (p / w) | 0;
+      const nbs = [x > 0 ? p-1 : -1, x < w-1 ? p+1 : -1, y > 0 ? p-w : -1, y < h-1 ? p+w : -1];
+      for (const nb of nbs) if (nb >= 0 && px[nb] !== 0 && !reach[nb] && !seen[nb]){ seen[nb] = 1; q[tail++] = nb; }
+    }
+  }
+  return { mask, holes, holePx };
+}
+
+// Messgrößen der Maske
+function measure(cur){
+  const { px, w, h } = cur, o = origFor(cur).data;
+  const isObj = (x, y) => x >= 0 && y >= 0 && x < w && y < h && px[y*w+x] === 0;
+  let area = 0, sx = 0, sy = 0, n0 = 0, n90 = 0, n45 = 0, n135 = 0;
+  const boundary = [];
+  const cut = new Uint8ClampedArray(w * h * 4).fill(255);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    const i = y*w + x; if (px[i] !== 0) continue;
+    area++; sx += x; sy += y;
+    const j = i*4; cut[j] = o[j]; cut[j+1] = o[j+1]; cut[j+2] = o[j+2];
+    // Übergänge Objekt → Hintergrund in 4 Richtungen (je von der Objektseite gezählt)
+    const l = !isObj(x-1, y), r = !isObj(x+1, y), u = !isObj(x, y-1), d = !isObj(x, y+1);
+    n0 += l + r; n90 += u + d;
+    n45  += !isObj(x+1, y+1) + !isObj(x-1, y-1);
+    n135 += !isObj(x+1, y-1) + !isObj(x-1, y+1);
+    if (l || r || u || d) boundary.push(i);
+  }
+  // Cauchy-Crofton-Schätzer: P ≈ π/8 · (n0 + n90 + (n45 + n135)/√2)
+  const perim = Math.PI / 8 * (n0 + n90 + (n45 + n135) / Math.SQRT2);
+  const comps = area ? components(px, w, h).n : 0;
+  return { area, frac: area / (w*h), perim, cx: area ? sx/area : 0, cy: area ? sy/area : 0, boundary, cut, comps };
+}
+
+const countObj = px => { let c = 0; for (let i = 0; i < px.length; i++) if (px[i] === 0) c++; return c; };
+const fmt = v => Math.round(v).toLocaleString('de-AT');
+const pct = (a, b) => (100 * a / b).toFixed(1).replace('.', ',') + ' %';
+const rgb = hex => { const n = parseInt(hex.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+
+/* ---------- Vorschau ---------- */
+function computePreview(){
+  const t = S.tool, cur = curState(); if (!t || !cur) return;
+  if (t.name === 'threshold'){
+    const out = new Uint8Array(cur.px.length), T = t.T;
+    for (let i = 0; i < out.length; i++) out[i] = cur.px[i] <= T ? 0 : 255;
+    t.mask = out; t.obj = countObj(out);
+  } else if (t.name === 'morph'){
+    t.mask = applyMorph(cur.px, cur.w, cur.h, t.op, t.r); t.obj = countObj(t.mask);
+  } else if (t.name === 'cc' && !t.mask){
+    const c = components(cur.px, cur.w, cur.h), oth = rgb(css('--other')); t.cc = c;
+    const mask = new Uint8Array(c.lab.length).fill(255), rgba = new Uint8ClampedArray(c.lab.length * 4);
+    for (let i = 0, j = 0; i < c.lab.length; i++, j += 4){
+      const l = c.lab[i];
+      if (!l){ rgba[j]=255; rgba[j+1]=255; rgba[j+2]=255; }
+      else if (l === c.best){ rgba[j]=0; rgba[j+1]=0; rgba[j+2]=0; mask[i] = 0; }
+      else { rgba[j]=oth[0]; rgba[j+1]=oth[1]; rgba[j+2]=oth[2]; }
+      rgba[j+3] = 255;
+    }
+    t.mask = mask; t.rgba = rgba;
+  } else if (t.name === 'fill' && !t.mask){
+    const f = fillHoles(cur.px, cur.w, cur.h), hc = rgb(css('--hole'));
+    const rgba = new Uint8ClampedArray(cur.px.length * 4);
+    for (let i = 0, j = 0; i < cur.px.length; i++, j += 4){
+      if (cur.px[i] === 0){ rgba[j]=0; rgba[j+1]=0; rgba[j+2]=0; }
+      else if (f.mask[i] === 0){ rgba[j]=hc[0]; rgba[j+1]=hc[1]; rgba[j+2]=hc[2]; }
+      else { rgba[j]=255; rgba[j+1]=255; rgba[j+2]=255; }
+      rgba[j+3] = 255;
+    }
+    t.mask = f.mask; t.rgba = rgba; t.holes = f.holes; t.holePx = f.holePx;
+  }
+}
+
+/* ---------- Ergebnis zeichnen ---------- */
+function drawResult(t){
+  const cur = curState(), m = t.m, { w, h } = cur;
+  paintRGBA(m.cut, w, h);
+  if (!m.area) return;
+  const lw = Math.max(2, Math.round(Math.max(w, h) / 300));
+  if (t.showP){
+    vctx.fillStyle = css('--perim');
+    for (const i of m.boundary){ const x = i % w, y = (i / w) | 0; vctx.fillRect(x + .5 - lw/2, y + .5 - lw/2, lw, lw); }
+  }
+  if (t.showC){
+    const a = Math.max(w, h) / 22, x = m.cx + .5, y = m.cy + .5;
+    const cross = () => { vctx.beginPath(); vctx.moveTo(x - a, y); vctx.lineTo(x + a, y); vctx.moveTo(x, y - a); vctx.lineTo(x, y + a); vctx.stroke(); };
+    vctx.lineCap = 'round';
+    vctx.strokeStyle = '#fff'; vctx.lineWidth = lw * 2.6; cross();
+    vctx.strokeStyle = css('--centroid'); vctx.lineWidth = lw * 1.3; cross();
+  }
+}
+
+/* ---------- Aktionen ---------- */
+function push(entry){ S.stack.push(entry); S.tool = null; refresh(); }
+function closeTool(){ S.tool = null; refresh(); }
+function refresh(){ renderPanel(); redraw(); updateToolbar(); }
+
+$('#undo').addEventListener('click', () => {
+  S.tool = null;
+  if (S.stack.length > 1) S.stack.pop();
+  refresh();
+});
+const cmp = $('#compare');
+const cmpOn = e => { if (!curState()) return; e.preventDefault(); S.comparing = true; redraw(); };
+const cmpOff = () => { if (!S.comparing) return; S.comparing = false; redraw(); };
+cmp.addEventListener('pointerdown', cmpOn);
+['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => cmp.addEventListener(ev, cmpOff));
+cmp.addEventListener('contextmenu', e => e.preventDefault());
+
+function updateToolbar(){
+  const cur = curState();
+  $('#undo').disabled = S.stack.length <= 1;
+  $('#compare').disabled = !cur;
+  $('#info').innerHTML = cur ? `${cur.binary ? 'binär' : 'Graustufen'}<br>${cur.w} × ${cur.h} px` : '';
+}
+
+function rotate180(){
+  const cur = curState(), px = new Uint8Array(cur.px.length), n = px.length;
+  for (let i = 0; i < n; i++) px[n-1-i] = cur.px[i];
+  push({ ...cur, px, rot: !cur.rot, label: '180° gedreht' });
+}
+function save(name){
+  view.toBlob(b => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  });
+}
+
+/* ---------- Bedienfeld ---------- */
+const panel = $('#panel');
+function stepper(){
+  const cur = curState();
+  const step = !cur ? 0 : !cur.binary ? 1 : (S.tool && S.tool.name === 'result') ? 3 : 2;
+  return `<ol class="steps">${['Foto', 'Schwellwert', 'Aufräumen', 'Ergebnis'].map((s, i) =>
+    `<li class="${i < step ? 'done' : i === step ? 'now' : ''}">${i < step ? '✓' : i + 1} ${s}</li>`).join('')}</ol>`;
+}
+const setPanel = html => { panel.innerHTML = stepper() + html; };
+
+function renderPanel(){
+  const cur = curState(), t = S.tool;
+  if (!cur){
+    setPanel(`<div class="start">
+      <label class="btn primary" for="file">Foto aufnehmen oder auswählen</label>
+      <p class="hint">Tipp: Querformat verwenden. Das Objekt sollte dunkel auf hellem Hintergrund sein und möglichst viel vom Bild ausfüllen.</p></div>`);
+    return;
+  }
+  if (!t){
+    const bin = cur.binary;
+    setPanel(`<div class="grid">
+        <button data-act="threshold" ${bin ? 'disabled' : ''}>Schwellwert</button>
+        <button data-act="morph" ${bin ? '' : 'disabled'}>Morphologie</button>
+        <button data-act="cc" ${bin ? '' : 'disabled'}>Größte Komponente</button>
+        <button data-act="fill" ${bin ? '' : 'disabled'}>Löcher füllen</button>
+        <button data-act="result" class="wide ${bin ? 'primary' : ''}" ${bin ? '' : 'disabled'}>Ergebnis ansehen →</button>
+        <button data-act="rotate">180° drehen</button>
+        <label class="btn" for="file">Neues Bild</label>
+      </div>
+      <p class="hint">${bin
+        ? 'Binärbild: Objekt = schwarz. Mit Morphologie, größter Komponente oder Löcher füllen aufräumen, dann das Ergebnis ansehen. „Original ◐“ gedrückt halten zeigt das Foto mit der Maske in Rot.'
+        : 'Erster Schritt: Mit einem Schwellwert ein Binärbild erzeugen. „Original ◐“ gedrückt halten zeigt das Foto.'}</p>
+      <div class="history">Verlauf: ${S.stack.map(s => s.label).join(' → ')}</div>`);
+    panel.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
+      const a = b.dataset.act;
+      if (a === 'threshold') openThreshold();
+      else if (a === 'morph'){ S.tool = { name: 'morph', op: 'open', r: 2 }; renderPanel(); schedule(); }
+      else if (a === 'cc'){ S.tool = { name: 'cc' }; renderPanel(); schedule(); }
+      else if (a === 'fill'){ S.tool = { name: 'fill' }; renderPanel(); schedule(); }
+      else if (a === 'result'){ S.tool = { name: 'result', showP: true, showC: true, m: measure(curState()) }; refresh(); }
+      else if (a === 'rotate') rotate180();
+    }));
+    return;
+  }
+  ({ threshold: renderThreshold, morph: renderMorph, cc: renderCC, fill: renderFill, result: renderResult })[t.name]();
+}
+
+function actionsHTML(){ return `<div class="actions"><button id="cancel">Abbrechen</button><button class="primary" id="apply">Anwenden</button></div>`; }
+function bindActions(onApply){ $('#cancel').addEventListener('click', closeTool); $('#apply').addEventListener('click', onApply); }
+
+/* Schwellwert */
+function openThreshold(){
+  const cur = curState(), hist = histogram(cur.px), o = otsu(hist, cur.px.length);
+  S.tool = { name: 'threshold', hist, otsu: o, T: o, log: false };
+  renderPanel(); schedule();
+}
+function renderThreshold(){
+  const t = S.tool;
+  setPanel(`<h2>Schwellwert</h2>
+    <canvas id="hist"></canvas>
+    <div class="legend"><span><i class="sw" style="background:#3a3a38"></i>wird Objekt</span>
+      <span><i class="sw" style="background:#c4c3bb"></i>Hintergrund</span>
+      <span><i class="sw" style="background:var(--warn)"></i>Otsu-Vorschlag</span></div>
+    <div class="row"><button id="tm" aria-label="kleiner">−</button>
+      <input type="range" id="ts" min="0" max="255" value="${t.T}"><button id="tp" aria-label="größer">+</button></div>
+    <div class="readout">T = <b id="tv"></b> · Pixel ≤ T werden schwarz · Objektanteil <b id="tf"></b></div>
+    <div class="row"><button id="otsu">Otsu: T = ${t.otsu}</button>
+      <label class="check"><input type="checkbox" id="log" ${t.log ? 'checked' : ''}> Log-Skala</label></div>
+    ${actionsHTML()}`);
+  const set = v => { t.T = Math.max(0, Math.min(255, v)); $('#ts').value = t.T; schedule(); };
+  $('#ts').addEventListener('input', e => set(+e.target.value));
+  $('#tm').addEventListener('click', () => set(t.T - 1));
+  $('#tp').addEventListener('click', () => set(t.T + 1));
+  $('#otsu').addEventListener('click', () => set(t.otsu));
+  $('#log').addEventListener('change', e => { t.log = e.target.checked; drawHist(); });
+  const hc = $('#hist'); let down = false;
+  const fromX = e => { const r = hc.getBoundingClientRect(); set(Math.round((e.clientX - r.left) / r.width * 255)); };
+  hc.addEventListener('pointerdown', e => { down = true; hc.setPointerCapture(e.pointerId); fromX(e); });
+  hc.addEventListener('pointermove', e => { if (down) fromX(e); });
+  hc.addEventListener('pointerup', () => { down = false; });
+  bindActions(() => push({ ...curState(), px: t.mask, binary: true, label: `Schwellwert T=${t.T}` }));
+}
+function drawHist(){
+  const t = S.tool, hc = $('#hist'); if (!hc || !t || t.name !== 'threshold') return;
+  const dpr = window.devicePixelRatio || 1, W = hc.clientWidth, H = hc.clientHeight;
+  hc.width = Math.round(W * dpr); hc.height = Math.round(H * dpr);
+  const c = hc.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+  const f = t.log ? (v => Math.log1p(v)) : (v => v);
+  let max = 0; for (let i = 0; i < 256; i++) max = Math.max(max, f(t.hist[i]));
+  const bw = W / 256, pad = 4;
+  for (let i = 0; i < 256; i++){
+    const bh = max ? f(t.hist[i]) / max * (H - pad) : 0;
+    c.fillStyle = i <= t.T ? '#3a3a38' : '#c4c3bb';
+    c.fillRect(i * bw, H - bh, Math.max(1, bw), bh);
+  }
+  const ox = (t.otsu + .5) * bw;
+  c.strokeStyle = css('--warn'); c.lineWidth = 2; c.setLineDash([4, 3]);
+  c.beginPath(); c.moveTo(ox, 0); c.lineTo(ox, H); c.stroke(); c.setLineDash([]);
+  const tx = (t.T + .5) * bw;
+  c.strokeStyle = css('--accent'); c.lineWidth = 2;
+  c.beginPath(); c.moveTo(tx, 0); c.lineTo(tx, H); c.stroke();
+}
+
+/* Morphologie */
+const OPS = {
+  erode:  ['Erosion',    'Schrumpft Objekte, entfernt kleine Punkte und dünne Verbindungen.'],
+  dilate: ['Dilatation', 'Vergrößert Objekte, schließt kleine Lücken und Löcher.'],
+  open:   ['Öffnen',     'Erosion, dann Dilatation: entfernt kleine Störungen, größere Formen bleiben fast unverändert.'],
+  close:  ['Schließen',  'Dilatation, dann Erosion: füllt kleine Löcher und Spalten, Formen bleiben fast unverändert.']
+};
+function renderMorph(){
+  const t = S.tool;
+  setPanel(`<h2>Morphologie</h2>
+    <div class="seg">${Object.keys(OPS).map(k => `<button data-op="${k}" aria-pressed="${t.op === k}">${OPS[k][0]}</button>`).join('')}</div>
+    <p class="hint" id="opdesc" style="margin-top:0"></p>
+    <div class="row"><button id="rm" aria-label="kleiner">−</button>
+      <input type="range" id="rs" min="1" max="20" value="${t.r}"><button id="rp" aria-label="größer">+</button></div>
+    <div class="se"><canvas id="se"></canvas><div>Strukturelement: Kreisscheibe, Radius <b id="rv"></b> px<br>Objektpixel: <b id="mo"></b></div></div>
+    ${actionsHTML()}`);
+  panel.querySelectorAll('[data-op]').forEach(b => b.addEventListener('click', () => {
+    t.op = b.dataset.op; panel.querySelectorAll('[data-op]').forEach(x => x.setAttribute('aria-pressed', x === b)); schedule();
+  }));
+  const set = v => { t.r = Math.max(1, Math.min(20, v)); $('#rs').value = t.r; schedule(); };
+  $('#rs').addEventListener('input', e => set(+e.target.value));
+  $('#rm').addEventListener('click', () => set(t.r - 1));
+  $('#rp').addEventListener('click', () => set(t.r + 1));
+  bindActions(() => push({ ...curState(), px: t.mask, label: `${OPS[t.op][0]} r=${t.r}` }));
+}
+function drawSE(r){
+  const cv = $('#se'); if (!cv) return;
+  const n = 2*r + 1, cell = Math.max(2, Math.floor(84 / n)), dpr = window.devicePixelRatio || 1;
+  cv.style.width = cv.style.height = n * cell + 'px'; cv.width = cv.height = Math.round(n * cell * dpr);
+  const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.fillStyle = '#fff'; c.fillRect(0, 0, n*cell, n*cell);
+  c.fillStyle = css('--accent');
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++)
+    if (dx*dx + dy*dy <= r*r) c.fillRect((dx+r)*cell, (dy+r)*cell, cell - (cell > 3 ? 1 : 0), cell - (cell > 3 ? 1 : 0));
+}
+
+/* Größte Komponente */
+function renderCC(){
+  setPanel(`<h2>Größte Komponente</h2>
+    <div class="legend"><span><i class="sw" style="background:#000"></i>größte Komponente (bleibt)</span>
+      <span><i class="sw" style="background:var(--other)"></i>andere (werden entfernt)</span></div>
+    <p class="readout" id="ccinfo"></p>
+    <p class="hint">Zusammenhang über 8er-Nachbarschaft (auch diagonal).</p>
+    ${actionsHTML()}`);
+  bindActions(() => { const t = S.tool; if (t.cc && t.cc.n) push({ ...curState(), px: t.mask, label: 'Größte Komponente' }); });
+}
+
+/* Löcher füllen */
+function renderFill(){
+  setPanel(`<h2>Löcher füllen</h2>
+    <div class="legend"><span><i class="sw" style="background:#000"></i>Objekt</span>
+      <span><i class="sw" style="background:var(--hole)"></i>Löcher (werden schwarz)</span></div>
+    <p class="readout" id="fillinfo"></p>
+    <p class="hint">Ein Loch ist ein weißer Bereich, der nicht mit dem Bildrand verbunden ist.</p>
+    ${actionsHTML()}`);
+  bindActions(() => { const t = S.tool; if (t.holes) push({ ...curState(), px: t.mask, label: 'Löcher gefüllt' }); });
+}
+
+/* Ergebnis */
+function renderResult(){
+  const t = S.tool, m = t.m, cur = curState();
+  if (!m.area){
+    setPanel(`<h2>Ergebnis</h2><p class="hint warn">Die Maske enthält keine Objektpixel.</p>
+      <div class="actions"><button id="back" class="wide">← Zur Bearbeitung</button></div>`);
+    $('#back').addEventListener('click', closeTool); return;
+  }
+  setPanel(`<h2>Ergebnis</h2>
+    <div class="meas">
+      <div class="mrow"><i class="sw" style="background:#3a3a38"></i><span>Fläche</span>
+        <span class="mval">${fmt(m.area)} px · ${pct(m.area, cur.w * cur.h)}</span></div>
+      <button class="mrow" id="mP" aria-pressed="${t.showP}"><i class="sw" style="background:var(--perim)"></i><span>Umfang</span>
+        <span class="mval">≈ ${fmt(m.perim)} px</span></button>
+      <button class="mrow" id="mC" aria-pressed="${t.showC}"><i class="sw" style="background:var(--centroid)"></i><span>Schwerpunkt</span>
+        <span class="mval">x = ${fmt(m.cx)}, y = ${fmt(m.cy)}</span></button>
+    </div>
+    ${m.comps > 1 ? `<p class="hint warn">Die Maske besteht aus ${m.comps} Teilen; alle Werte gelten für alle Teile zusammen. Tipp: vorher „Größte Komponente“ anwenden.</p>` : ''}
+    <p class="hint">Fläche = Anzahl der Objektpixel. Umfang = blaue Randlinie, geschätzt aus den Objekt/Hintergrund-Übergängen in vier Richtungen (Cauchy-Crofton). Schwerpunkt = Mittelwert der Pixelkoordinaten (Ursprung links oben). Antippen blendet die Markierung ein oder aus. Alle Werte in Pixeln des verkleinerten Bildes.</p>
+    <div class="actions"><button id="back">← Bearbeiten</button><button class="primary" id="save">Ansicht speichern</button></div>`);
+  const toggle = (id, key) => $(id).addEventListener('click', e => {
+    t[key] = !t[key]; e.currentTarget.setAttribute('aria-pressed', t[key]); redraw();
+  });
+  toggle('#mP', 'showP'); toggle('#mC', 'showC');
+  $('#back').addEventListener('click', closeTool);
+  $('#save').addEventListener('click', () => save('ergebnis.png'));
+}
+
+function updateReadouts(){
+  const t = S.tool, cur = curState(); if (!t || !cur) return;
+  if (t.name === 'threshold'){
+    $('#tv').textContent = t.T; $('#tf').textContent = pct(t.obj, cur.px.length); drawHist();
+  } else if (t.name === 'morph'){
+    $('#rv').textContent = t.r; $('#opdesc').textContent = OPS[t.op][1];
+    $('#mo').textContent = `${fmt(countObj(cur.px))} → ${fmt(t.obj)}`;
+    drawSE(t.r);
+  } else if (t.name === 'cc' && t.cc){
+    const c = t.cc, tot = c.sizes.reduce((a, b) => a + b, 0);
+    $('#ccinfo').innerHTML = c.n
+      ? `${c.n} Komponente${c.n === 1 ? '' : 'n'} gefunden. Größte: <b>${fmt(c.sizes[c.best])} px</b> (${pct(c.sizes[c.best], tot)} der Objektpixel).`
+      : 'Keine Objektpixel vorhanden.';
+    $('#apply').disabled = !c.n;
+  } else if (t.name === 'fill' && t.mask){
+    $('#fillinfo').innerHTML = t.holes
+      ? `${t.holes} Loch${t.holes === 1 ? '' : 'er'} gefunden, zusammen <b>${fmt(t.holePx)} px</b>.`
+      : 'Keine Löcher gefunden.';
+    $('#apply').disabled = !t.holes;
+  }
+}
+
+window.addEventListener('resize', () => { if (S.tool && S.tool.name === 'threshold') drawHist(); });
+refresh();
+})();
+</script>
+</body>
+</html>
