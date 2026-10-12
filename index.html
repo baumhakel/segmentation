@@ -5,69 +5,102 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bildsegmentierung</title>
 <style>
-:root{
+/* Alle Regeln sind auf #segapp beschränkt: eingebettet in eine fremde Seite (z. B. TYPO3)
+   beeinflusst die App die Seite nicht und umgekehrt. */
+#segapp{
   --bg:#f4f4f1; --panel:#ffffff; --ink:#1d1d1b; --muted:#6b6b66; --line:#dddcd6;
   --accent:#2f5d8a; --accent-ink:#ffffff; --accent-soft:#e3ebf3; --warn:#c0532f; --stage:#262624;
   --perim:#1f78ff; --scale:#d61f8f; --centroid:#ff8c00; --hole:#4f8fd6; --other:#e88c73;
+  display:block;position:relative;width:100%;max-width:100%;min-width:0;
+  height:100vh;height:min(100svh,900px);min-height:520px;
+  overflow:hidden;overflow:clip;container-type:size;
+  background:var(--bg);color:var(--ink);text-align:left;
+  font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:normal;
+  -webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;text-size-adjust:100%;
 }
-*{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
-  font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
-body{display:grid;grid-template-rows:minmax(160px,min(48dvh,76vw)) auto minmax(0,1fr);height:100dvh;max-width:900px;margin:0 auto;background:var(--panel)}
-#stage{background:var(--stage);display:flex;align-items:center;justify-content:center;overflow:hidden}
-#view{max-width:100%;max-height:100%;display:none}
-#placeholder{color:#a9a8a2;text-align:center;padding:1rem;font-size:.95rem}
-#toolbar{display:flex;gap:.5rem;padding:.5rem .75rem;border-bottom:1px solid var(--line);align-items:center}
-#toolbar .info{margin-left:auto;color:var(--muted);font-size:.8rem;text-align:right;line-height:1.25}
-#panel{overflow-y:auto;padding:.6rem .75rem calc(1.25rem + env(safe-area-inset-bottom))}
-h2{font-size:1.05rem;margin:.1rem 0 .6rem}
-button,.btn{font:inherit;font-size:.95rem;border:1px solid var(--line);background:#fafaf8;color:var(--ink);border-radius:10px;
-  padding:.6rem .85rem;min-height:44px;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
-  display:inline-flex;align-items:center;justify-content:center;text-align:center;white-space:nowrap}
-button:disabled{opacity:.38;cursor:default}
-button.primary,.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
-button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
-.grid .wide{grid-column:1 / -1}
-.row{display:flex;gap:.5rem;align-items:center;margin:.5rem 0}
-.row input[type=range]{flex:1;min-width:0;height:32px;accent-color:var(--accent)}
-.seg{display:grid;grid-template-columns:repeat(4,1fr);gap:.35rem;margin-bottom:.5rem}
-.seg button{padding:.5rem .2rem;font-size:.85rem}
-.actions{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:.75rem}
-.hint{color:var(--muted);font-size:.88rem;margin:.6rem 0}
-.hint.warn{color:var(--warn)}
-.readout{font-size:.92rem;margin:.25rem 0}
-.history{font-size:.8rem;color:var(--muted);border-top:1px solid var(--line);padding-top:.5rem;margin-top:.75rem}
-#hist{width:100%;height:100px;display:block;touch-action:none;border:1px solid var(--line);border-radius:8px;background:#fcfcfa}
-.legend{display:flex;gap:.9rem;flex-wrap:wrap;font-size:.8rem;color:var(--muted);margin:.35rem 0}
-.sw{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.3em;flex:none}
-label.check{display:inline-flex;gap:.4rem;align-items:center;font-size:.9rem;margin-left:auto}
-label.check input{width:20px;height:20px;accent-color:var(--accent)}
-.se{display:flex;gap:.75rem;align-items:center;font-size:.85rem;color:var(--muted)}
-#se{image-rendering:pixelated;border:1px solid var(--line);background:#fff}
-#file{display:none}
-.start{display:flex;flex-direction:column;gap:.75rem}
-.start .btn{min-height:56px;font-size:1.05rem}
-.steps{display:flex;gap:.25rem;list-style:none;padding:0;margin:0 0 .65rem;font-size:.74rem}
-.steps li{flex:1;text-align:center;padding:.28rem .15rem;border-radius:6px;background:#efeee9;color:var(--muted);white-space:nowrap}
-.steps li.now{background:var(--accent);color:#fff;font-weight:600}
-.steps li.done{background:var(--accent-soft);color:var(--accent)}
-.meas{display:flex;flex-direction:column;gap:.4rem}
-.mrow{display:grid;grid-template-columns:1.1em 6.6em 1fr;align-items:center;justify-items:start;text-align:left;width:100%;
-  padding:.55rem .7rem;border:1px solid var(--line);border-radius:10px;min-height:44px;font-size:.95rem;background:#fafaf8}
-.mrow .mval{justify-self:end;font-variant-numeric:tabular-nums}
-button.mrow[aria-pressed="false"]{opacity:.55}
-button.mrow[aria-pressed="false"] .sw{background:transparent !important;outline:2px solid currentColor;outline-offset:-2px}
-.row input[type=text]{width:6.5em;font:inherit;font-size:16px;padding:.5rem .6rem;border:1px solid var(--line);border-radius:8px;min-height:44px}
-.row label{font-size:.95rem}
-#toolbar button{padding:.6rem .7rem}
-.copied{font-size:.85rem;color:var(--accent);margin:.5rem 0 0;min-height:1.2em}
-.wide{grid-column:1 / -1}
+#segapp *,#segapp *::before,#segapp *::after{box-sizing:border-box;margin:0;font-family:inherit;letter-spacing:inherit;text-transform:none;float:none}
+#segapp.sa-full{position:fixed;inset:0;width:auto;height:auto;max-height:none;min-height:0;z-index:2147483000}
+#segapp.sa-standalone{height:100vh;height:100dvh;min-height:0}
+html.sa-standalone,html.sa-standalone body{margin:0;padding:0;height:100%;overflow:hidden;background:#f4f4f1}
+html.sa-noscroll,html.sa-noscroll body{overflow:hidden !important}
+
+#segapp .sa-app{display:grid;height:100%;max-width:900px;margin:0 auto;background:var(--panel);
+  grid-template-rows:minmax(160px,48%) auto minmax(0,1fr);
+  grid-template-rows:minmax(160px,min(48cqh,76cqw)) auto minmax(0,1fr)}
+#segapp #stage{background:var(--stage);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;touch-action:none;-webkit-user-select:none;user-select:none;min-width:0}
+#segapp #view{position:absolute;left:0;top:0;display:none;max-width:none;max-height:none;border:0;-webkit-touch-callout:none}
+#segapp .ovl{position:absolute;top:.5em;min-height:36px;padding:.35em .65em;border:0;border-radius:8px;
+  background:rgba(20,20,18,.66);color:#fff;font-size:.85em;font-variant-numeric:tabular-nums;box-shadow:none}
+#segapp #zbtn{right:.5em}
+#segapp #fsbtn{left:.5em}
+#segapp .ovl[hidden]{display:none}
+#segapp #placeholder{color:#a9a8a2;text-align:center;padding:1em;font-size:.95em}
+#segapp #toolbar{display:flex;gap:.5em;padding:.5em .75em;border-bottom:1px solid var(--line);align-items:center;min-width:0}
+#segapp #toolbar .info{margin-left:auto;color:var(--muted);font-size:.8em;text-align:right;line-height:1.25;min-width:0}
+#segapp #toolbar button{padding:.6em .7em;white-space:nowrap;flex:none}
+#segapp #panel{overflow-y:auto;min-width:0;padding:.6em .75em calc(1.25em + env(safe-area-inset-bottom))}
+#segapp h2{font-size:1.05em;font-weight:700;line-height:1.3;color:var(--ink);margin:.1em 0 .6em;padding:0;border:0;background:none}
+#segapp p{font-size:inherit;line-height:1.4}
+#segapp button,#segapp .btn{font:inherit;font-size:.95em;line-height:1.25;border:1px solid var(--line);background:#fafaf8;color:var(--ink);border-radius:10px;
+  padding:.6em .85em;min-height:44px;min-width:0;width:auto;height:auto;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
+  display:inline-flex;align-items:center;justify-content:center;text-align:center;white-space:normal;touch-action:manipulation;
+  box-shadow:none;text-decoration:none;font-weight:400;vertical-align:middle}
+#segapp button:disabled{opacity:.38;cursor:default}
+#segapp button.primary,#segapp .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+#segapp button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+#segapp .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5em}
+#segapp .wide{grid-column:1 / -1}
+#segapp .row{display:flex;gap:.5em;align-items:center;margin:.5em 0;min-width:0}
+#segapp .row input[type=range]{flex:1;min-width:0;width:auto;height:32px;margin:0;padding:0;accent-color:var(--accent);background:none;border:0}
+#segapp .row input[type=text]{width:6.5em;min-width:0;font:inherit;font-size:16px;padding:.5em .6em;border:1px solid var(--line);border-radius:8px;min-height:44px;background:#fff;color:var(--ink)}
+#segapp .row label{font-size:.95em;display:inline;margin:0;font-weight:400}
+#segapp .seg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.35em;margin-bottom:.5em}
+#segapp .seg button{padding:.5em .2em;font-size:.85em}
+#segapp .actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5em;margin-top:.75em}
+#segapp .hint{color:var(--muted);font-size:.88em;margin:.6em 0}
+#segapp .hint.warn{color:var(--warn)}
+#segapp .readout{font-size:.92em;margin:.25em 0}
+#segapp .history{font-size:.8em;color:var(--muted);border-top:1px solid var(--line);padding-top:.5em;margin-top:.75em;overflow-wrap:anywhere}
+#segapp #hist{width:100%;max-width:100%;height:100px;display:block;touch-action:none;border:1px solid var(--line);border-radius:8px;background:#fcfcfa}
+#segapp .legend{display:flex;gap:.3em .9em;flex-wrap:wrap;font-size:.8em;color:var(--muted);margin:.35em 0}
+#segapp .sw{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.3em;flex:none;font-style:normal}
+#segapp label.check{display:inline-flex;gap:.4em;align-items:center;font-size:.9em;margin:0 0 0 auto;font-weight:400}
+#segapp label.check input{width:20px;height:20px;margin:0;accent-color:var(--accent)}
+#segapp .se{display:flex;gap:.75em;align-items:center;font-size:.85em;color:var(--muted)}
+#segapp #se{image-rendering:pixelated;border:1px solid var(--line);background:#fff;max-width:none}
+#segapp .sa-file{display:none}
+#segapp .start{display:flex;flex-direction:column;gap:.75em}
+#segapp .start .btn{min-height:56px;font-size:1.05em}
+#segapp .steps{display:flex;gap:.25em;list-style:none;padding:0;margin:0 0 .65em;font-size:.74em}
+#segapp .steps li{flex:1 1 0;min-width:0;text-align:center;padding:.28em .15em;margin:0;border-radius:6px;background:#efeee9;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;list-style:none}
+#segapp .steps li::before,#segapp .steps li::marker{content:none}
+#segapp .steps li.now{background:var(--accent);color:#fff;font-weight:600;flex-grow:2.2}
+#segapp .steps li.done{background:var(--accent-soft);color:var(--accent)}
+#segapp .meas{display:flex;flex-direction:column;gap:.4em}
+#segapp .mrow{display:grid;grid-template-columns:1.1em auto minmax(0,1fr);column-gap:.3em;align-items:center;justify-items:start;text-align:left;width:100%;
+  padding:.55em .7em;border:1px solid var(--line);border-radius:10px;min-height:44px;font-size:.95em;background:#fafaf8}
+#segapp .mrow .mval{justify-self:end;text-align:right;font-variant-numeric:tabular-nums}
+#segapp button.mrow[aria-pressed="false"]{opacity:.55}
+#segapp button.mrow[aria-pressed="false"] .sw{background:transparent !important;outline:2px solid currentColor;outline-offset:-2px}
+#segapp .copied{font-size:.85em;color:var(--accent);margin:.5em 0 0;min-height:1.2em}
+#segapp b{font-weight:700}
+/* schmale Spalten (z. B. Handy mit Seitenrändern) */
+@container (max-width: 420px){
+  #segapp .steps li:not(.now) .lbl{display:none}
+  #segapp .seg{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@container (max-width: 360px){
+  #segapp #toolbar .info{display:none}
+}
 </style>
 </head>
 <body>
+<!-- ======== Bildsegmentierung: Beginn (für TYPO3 & Co. kann die ganze Datei eingefügt werden) ======== -->
+<div id="segapp"><div class="sa-app">
 <div id="stage">
   <canvas id="view"></canvas>
+  <button id="fsbtn" class="ovl" hidden>⛶ Vollbild</button>
+  <button id="zbtn" class="ovl" hidden aria-label="Ganzes Bild zeigen"></button>
   <div id="placeholder">Noch kein Bild.<br>Unten ein Foto aufnehmen oder auswählen.</div>
 </div>
 <div id="toolbar">
@@ -77,19 +110,48 @@ button.mrow[aria-pressed="false"] .sw{background:transparent !important;outline:
   <div class="info" id="info"></div>
 </div>
 <div id="panel"></div>
-<input type="file" id="file" accept="image/*">
-
+<input type="file" id="sa-file" class="sa-file" accept="image/*">
+</div></div>
 <script>
 (() => {
 "use strict";
 const MAX_SIDE = 800;           // längste Bildseite nach dem Verkleinern
-const $ = s => document.querySelector(s);
-const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const root = document.getElementById('segapp');
+const $ = s => root.querySelector(s);                 // nur innerhalb der App suchen
+const css = name => getComputedStyle(root).getPropertyValue(name).trim();
+
+/* ---------- Eigenständig oder eingebettet ---------- */
+// Eigenständig: die App ist das einzige Element der Seite (direkt im <body>).
+// Eingebettet (z. B. TYPO3): die App reserviert einen Block in der Seite; "Vollbild" legt sie über die ganze Seite.
+const standalone = root.parentElement === document.body;
+if (standalone){ document.documentElement.classList.add('sa-standalone'); root.classList.add('sa-standalone'); }
+const fsbtn = $('#fsbtn');
+let fsHome = null;
+function setFull(on){
+  if (on === !!fsHome) return;
+  if (on){
+    // an den <body> hängen, damit position:fixed nicht von Elternelementen der Seite beeinflusst wird
+    fsHome = document.createComment('segapp'); root.parentNode.insertBefore(fsHome, root);
+    document.body.appendChild(root); root.classList.add('sa-full'); document.documentElement.classList.add('sa-noscroll');
+  } else {
+    fsHome.parentNode.insertBefore(root, fsHome); fsHome.remove(); fsHome = null;
+    root.classList.remove('sa-full'); document.documentElement.classList.remove('sa-noscroll');
+    root.scrollIntoView({ block: 'start' });
+  }
+  fsbtn.textContent = on ? '✕ Vollbild' : '⛶ Vollbild';
+  fsbtn.setAttribute('aria-label', on ? 'Vollbild beenden' : 'Vollbild');
+}
+if (!standalone){
+  fsbtn.hidden = false;
+  fsbtn.addEventListener('click', () => setFull(!fsHome));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && fsHome) setFull(false); });
+}
 
 // Zustand: Stapel von Bildern (für "Zurück"). Graustufen: Werte 0..255.
 // Binärbild (Maske): 0 = Objekt (schwarz), 255 = Hintergrund (weiß).
 const S = { stack: [], redo: [], orig: null, origRot: null, tool: null, comparing: false, scale: null };
 const curState = () => S.stack[S.stack.length - 1];
+const Z = { z: 1, x: 0, y: 0 };   // Zoom (relativ zum ganzen Bild) und Verschiebung
 const origFor = cur => cur.rot ? S.origRot : S.orig;
 
 /* ---------- Anzeige ---------- */
@@ -126,8 +188,7 @@ function paintOverlay(){
 function redraw(){
   const cur = curState(); if (!cur) return;
   view.style.display = 'block'; $('#placeholder').style.display = 'none';
-  const sm = !!(S.tool && S.tool.scaleMode);
-  view.style.touchAction = sm ? 'none' : ''; view.style.cursor = sm ? 'crosshair' : '';
+  applyZoom();
   if (S.comparing) return paintOverlay();
   const t = S.tool;
   if (t && t.name === 'result') return drawResult(t);
@@ -160,11 +221,11 @@ async function loadFile(file){
   // gedrehte Kopie des Farbbilds (für Vergleich und Ergebnis nach 180°-Drehung)
   const rot = new ImageData(w, h), r = rot.data, n = w * h;
   for (let i = 0; i < n; i++){ const a = i*4, b = (n-1-i)*4; r[b]=d[a]; r[b+1]=d[a+1]; r[b+2]=d[a+2]; r[b+3]=255; }
-  S.orig = id; S.origRot = rot; S.tool = null; S.redo = []; S.scale = null;
+  S.orig = id; S.origRot = rot; S.tool = null; S.redo = []; S.scale = null; Z.z = 1;
   S.stack = [{ px: grey, w, h, binary: false, rot: false, label: 'Graustufen' }];
   refresh();
 }
-$('#file').addEventListener('change', e => {
+$('#sa-file').addEventListener('change', e => {
   const f = e.target.files[0]; e.target.value = '';
   if (f) loadFile(f).catch(() => alert('Das Bild konnte nicht geladen werden.'));
 });
@@ -328,7 +389,7 @@ function computePreview(){
 /* ---------- Ergebnis zeichnen ---------- */
 function drawScale(s){
   const cur = curState(), o = origFor(cur); paintRGBA(o.data, o.width, o.height);
-  const r = view.getBoundingClientRect(), k = r.width ? view.width / r.width : 1;
+  const k = 1 / curS();
   vctx.lineCap = 'round';
   const line = () => { vctx.beginPath(); vctx.moveTo(s.a.x, s.a.y); vctx.lineTo(s.b.x, s.b.y); vctx.stroke(); };
   vctx.strokeStyle = '#fff'; vctx.lineWidth = 6*k; line();
@@ -345,24 +406,24 @@ function drawResult(t){
   const cur = curState(), m = t.m, { w, h } = cur;
   paintRGBA(m.cut, w, h);
   if (!m.area) return;
-  const lw = Math.max(2, Math.round(Math.max(w, h) / 300));
+  const k = 1 / curS(), lp = Math.max(1, 2 * k);
   if (t.showP){
     vctx.fillStyle = css('--perim');
-    for (const i of m.boundary){ const x = i % w, y = (i / w) | 0; vctx.fillRect(x + .5 - lw/2, y + .5 - lw/2, lw, lw); }
+    for (const i of m.boundary){ const x = i % w, y = (i / w) | 0; vctx.fillRect(x + .5 - lp/2, y + .5 - lp/2, lp, lp); }
   }
   if (t.showC){
-    const a = Math.max(w, h) / 22, x = m.cx + .5, y = m.cy + .5;
+    const a = 20 * k, x = m.cx + .5, y = m.cy + .5;
     const cross = () => { vctx.beginPath(); vctx.moveTo(x - a, y); vctx.lineTo(x + a, y); vctx.moveTo(x, y - a); vctx.lineTo(x, y + a); vctx.stroke(); };
     vctx.lineCap = 'round';
-    vctx.strokeStyle = '#fff'; vctx.lineWidth = lw * 2.6; cross();
-    vctx.strokeStyle = css('--centroid'); vctx.lineWidth = lw * 1.3; cross();
+    vctx.strokeStyle = '#fff'; vctx.lineWidth = 6 * k; cross();
+    vctx.strokeStyle = css('--centroid'); vctx.lineWidth = 3 * k; cross();
   }
 }
 
 /* ---------- Aktionen ---------- */
 function push(entry){ S.stack.push(entry); S.redo = []; S.tool = null; refresh(); }
 function closeTool(){ S.tool = null; refresh(); }
-function refresh(){ renderPanel(); redraw(); updateToolbar(); }
+function refresh(){ renderPanel(); redraw(); updateToolbar(); $('#stage').style.touchAction = curState() ? 'none' : 'auto'; }
 
 $('#undo').addEventListener('click', () => {
   S.tool = null;
@@ -392,6 +453,7 @@ function updateToolbar(){
 function rotate180(){
   const cur = curState(), px = new Uint8Array(cur.px.length), n = px.length;
   for (let i = 0; i < n; i++) px[n-1-i] = cur.px[i];
+  Z.z = 1;
   push({ ...cur, px, rot: !cur.rot, label: '180° gedreht' });
 }
 function save(name){
@@ -407,7 +469,7 @@ function stepper(){
   const cur = curState();
   const step = !cur ? 0 : !cur.binary ? 1 : (S.tool && S.tool.name === 'result') ? 3 : 2;
   return `<ol class="steps">${['Foto', 'Schwellwert', 'Aufräumen', 'Ergebnis'].map((s, i) =>
-    `<li class="${i < step ? 'done' : i === step ? 'now' : ''}">${i < step ? '✓' : i + 1} ${s}</li>`).join('')}</ol>`;
+    `<li class="${i < step ? 'done' : i === step ? 'now' : ''}">${i < step ? '✓' : i + 1}<span class="lbl"> ${s}</span></li>`).join('')}</ol>`;
 }
 const setPanel = html => { panel.innerHTML = stepper() + html; };
 
@@ -415,8 +477,8 @@ function renderPanel(){
   const cur = curState(), t = S.tool;
   if (!cur){
     setPanel(`<div class="start">
-      <label class="btn primary" for="file">Foto aufnehmen oder auswählen</label>
-      <p class="hint">Tipp: Querformat verwenden. Das Objekt sollte dunkel auf hellem Hintergrund sein und möglichst viel vom Bild ausfüllen.</p></div>`);
+      <label class="btn primary" for="sa-file">Foto aufnehmen oder auswählen</label>
+      <p class="hint">Tipp: Querformat verwenden. Das Objekt sollte dunkel auf hellem Hintergrund sein und möglichst viel vom Bild ausfüllen.<br>Im Bild: mit zwei Fingern zoomen, mit einem Finger verschieben, Doppeltipp = ganzes Bild.</p></div>`);
     return;
   }
   if (!t){
@@ -428,7 +490,7 @@ function renderPanel(){
         <button data-act="fill" ${bin ? '' : 'disabled'}>Löcher füllen</button>
         <button data-act="result" class="wide ${bin ? 'primary' : ''}" ${bin ? '' : 'disabled'}>Ergebnis ansehen →</button>
         <button data-act="rotate">180° drehen</button>
-        <label class="btn" for="file">Neues Bild</label>
+        <label class="btn" for="sa-file">Neues Bild</label>
       </div>
       <p class="hint">${bin
         ? 'Binärbild: Objekt = schwarz. Mit Morphologie, größter Komponente oder Löcher füllen aufräumen, dann das Ergebnis ansehen. „Original ◐“ gedrückt halten zeigt das Foto mit der Maske in Rot.'
@@ -437,7 +499,7 @@ function renderPanel(){
     panel.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
       const a = b.dataset.act;
       if (a === 'threshold') openThreshold();
-      else if (a === 'morph'){ S.tool = { name: 'morph', op: 'open', r: 2 }; renderPanel(); schedule(); }
+      else if (a === 'morph'){ S.tool = { name: 'morph', op: 'close', r: 2 }; renderPanel(); schedule(); }
       else if (a === 'cc'){ S.tool = { name: 'cc' }; renderPanel(); schedule(); }
       else if (a === 'fill'){ S.tool = { name: 'fill' }; renderPanel(); schedule(); }
       else if (a === 'result'){ S.tool = { name: 'result', showP: true, showC: true, m: measure(curState()) }; refresh(); }
@@ -638,16 +700,16 @@ function openScale(){
 function renderScale(){
   const t = S.tool, s = t.scaleMode;
   setPanel(`<h2>Maßstab setzen</h2>
-    <p class="hint" style="margin-top:0">Ziehe die beiden Punkte an die Enden einer Strecke, deren Länge du kennst (z. B. 5 cm auf einem Lineal), und gib diese Länge ein. Tipp: etwas neben dem Punkt ansetzen, dann verdeckt der Finger ihn nicht.</p>
+    <p class="hint" style="margin-top:0">Ziehe die beiden Punkte an die Enden einer Strecke, deren Länge du kennst (z. B. 5 cm auf einem Lineal), und gib diese Länge ein. Auf einem Punkt ansetzen verschiebt den Punkt, woanders ansetzen verschiebt das Bild. Für mehr Genauigkeit mit zwei Fingern hineinzoomen.</p>
     <div class="readout">Strecke im Bild: <b id="spx"></b> px</div>
-    <div class="row"><label for="smm">Wirkliche Länge:</label>
-      <input id="smm" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 50" value="${s.mm}"><span>mm</span></div>
+    <div class="row"><label for="sa-smm">Wirkliche Länge:</label>
+      <input id="sa-smm" name="sa-smm" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 50" value="${s.mm}"><span>mm</span></div>
     <div class="readout" id="sres"></div>
     <div class="actions">
       ${S.scale ? '<button id="sdel" class="wide">Maßstab entfernen</button>' : ''}
       <button id="cancel">Abbrechen</button><button class="primary" id="apply">Übernehmen</button>
     </div>`);
-  $('#smm').addEventListener('input', e => { s.mm = e.target.value; updateScale(); });
+  $('#sa-smm').addEventListener('input', e => { s.mm = e.target.value; updateScale(); });
   $('#cancel').addEventListener('click', () => { t.scaleMode = null; refresh(); });
   $('#apply').addEventListener('click', () => {
     const len = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y), mm = parseLen(s.mm);
@@ -666,22 +728,107 @@ function updateScale(){
     : ok ? `→ 1 mm ≙ ${num(len / mm, 2)} px` : 'Bitte die Länge in mm eingeben.';
   $('#apply').disabled = !ok;
 }
-// Endpunkte mit dem Finger ziehen (immer den näheren Punkt, mit Abstand zum Finger)
-let drag = null;
+/* ---------- Zoom und Gesten ---------- */
+// Bildschirmposition = (Z.x, Z.y) + Bildpixel · s, mit s = fitS() · Z.z (Z.z ≥ 1: nie kleiner als das ganze Bild)
+const MAX_PX = 12;                                   // höchstens 12 Bildschirmpunkte pro Bildpixel
+const stage = $('#stage'), zbtn = $('#zbtn');
+function fitS(){ const cur = curState(); return cur ? Math.min(stage.clientWidth / cur.w, stage.clientHeight / cur.h) : 1; }
+function curS(){ return fitS() * Z.z; }
+const zMax = () => Math.max(1, MAX_PX / fitS());
+function clampZ(){
+  const cur = curState(); if (!cur) return;
+  Z.z = Math.min(Math.max(1, Z.z), zMax());
+  const s = curS(), dw = cur.w * s, dh = cur.h * s, SW = stage.clientWidth, SH = stage.clientHeight;
+  Z.x = dw <= SW ? (SW - dw) / 2 : Math.min(0, Math.max(SW - dw, Z.x));
+  Z.y = dh <= SH ? (SH - dh) / 2 : Math.min(0, Math.max(SH - dh, Z.y));
+}
+function applyZoom(){
+  const cur = curState(); if (!cur) return;
+  clampZ(); const s = curS();
+  view.style.width = cur.w * s + 'px'; view.style.height = cur.h * s + 'px';
+  view.style.transform = `translate(${Z.x}px, ${Z.y}px)`;
+  view.style.imageRendering = s >= 1 ? 'pixelated' : 'auto';
+  stage.style.cursor = S.tool && S.tool.scaleMode ? 'crosshair' : Z.z > 1.01 ? 'grab' : '';
+  zbtn.hidden = Z.z < 1.01;
+  zbtn.textContent = `⤢ ${num(Z.z, 1)}×`;
+}
+function zoomAt(px, py, z){
+  const s0 = curS(), ix = (px - Z.x) / s0, iy = (py - Z.y) / s0;
+  Z.z = Math.min(Math.max(1, z), zMax());
+  const s1 = curS(); Z.x = px - ix * s1; Z.y = py - iy * s1;
+}
+let annoPending = false;
+function onZoom(){
+  applyZoom();
+  // Markierungen (Umfang, Schwerpunkt, Maßstab) haben feste Bildschirmgröße → neu zeichnen
+  if (S.tool && S.tool.name === 'result' && !annoPending){
+    annoPending = true; requestAnimationFrame(() => { annoPending = false; redraw(); });
+  }
+}
+zbtn.addEventListener('click', () => { Z.z = 1; onZoom(); });
+
+const ptrs = new Map(); let G = null, lastTap = null;
+const stagePt = e => { const r = stage.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const toImg = e => { const r = view.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * view.width, y: (e.clientY - r.top) / r.height * view.height }; };
-view.addEventListener('pointerdown', e => {
-  const s = S.tool && S.tool.scaleMode; if (!s || S.comparing) return;
-  e.preventDefault(); const p = toImg(e);
-  const h = Math.hypot(s.a.x - p.x, s.a.y - p.y) <= Math.hypot(s.b.x - p.x, s.b.y - p.y) ? s.a : s.b;
-  drag = { h, dx: h.x - p.x, dy: h.y - p.y }; view.setPointerCapture(e.pointerId);
+function hitHandle(s, p){
+  const k = curS(), sa = { x: Z.x + s.a.x * k, y: Z.y + s.a.y * k }, sb = { x: Z.x + s.b.x * k, y: Z.y + s.b.y * k };
+  const da = dist(p, sa), db = dist(p, sb), R = 30;
+  if (Math.min(da, db) > R) return null;
+  return da <= db ? s.a : s.b;
+}
+function startPan(id, p){ G = { mode: 'pan', id, sx: p.x, sy: p.y, x0: Z.x, y0: Z.y, moved: false }; }
+function startPinch(){
+  const [a, b] = [...ptrs.values()], m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, s0 = curS();
+  G = { mode: 'pinch', d0: dist(a, b) || 1, z0: Z.z, ix: (m.x - Z.x) / s0, iy: (m.y - Z.y) / s0 };
+}
+stage.addEventListener('pointerdown', e => {
+  if (!curState() || e.target === zbtn || e.target === fsbtn) return;
+  e.preventDefault(); stage.setPointerCapture(e.pointerId);
+  const p = stagePt(e); ptrs.set(e.pointerId, p);
+  if (ptrs.size === 1){
+    const s = S.tool && S.tool.scaleMode, h = s && !S.comparing ? hitHandle(s, p) : null;
+    if (h){ const ip = toImg(e); G = { mode: 'handle', id: e.pointerId, h, dx: h.x - ip.x, dy: h.y - ip.y }; }
+    else startPan(e.pointerId, p);
+  } else if (ptrs.size === 2) startPinch();
 });
-view.addEventListener('pointermove', e => {
-  if (!drag || !(S.tool && S.tool.scaleMode)) return;
-  const p = toImg(e), cur = curState();
-  drag.h.x = Math.max(0, Math.min(cur.w, p.x + drag.dx)); drag.h.y = Math.max(0, Math.min(cur.h, p.y + drag.dy));
-  redraw(); updateScale();
+stage.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId) || !G) return;
+  const p = stagePt(e); ptrs.set(e.pointerId, p);
+  if (G.mode === 'handle' && e.pointerId === G.id){
+    const ip = toImg(e), cur = curState();
+    G.h.x = Math.max(0, Math.min(cur.w, ip.x + G.dx)); G.h.y = Math.max(0, Math.min(cur.h, ip.y + G.dy));
+    redraw(); updateScale();
+  } else if (G.mode === 'pan' && e.pointerId === G.id){
+    if (Math.hypot(p.x - G.sx, p.y - G.sy) > 8) G.moved = true;
+    Z.x = G.x0 + p.x - G.sx; Z.y = G.y0 + p.y - G.sy; onZoom();
+  } else if (G.mode === 'pinch' && ptrs.size >= 2){
+    const [a, b] = [...ptrs.values()], m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    Z.z = Math.min(Math.max(1, G.z0 * dist(a, b) / G.d0), zMax());
+    const s1 = curS(); Z.x = m.x - G.ix * s1; Z.y = m.y - G.iy * s1; onZoom();
+  }
 });
-['pointerup', 'pointercancel'].forEach(ev => view.addEventListener(ev, () => { drag = null; }));
+function endPointer(e){
+  if (!ptrs.has(e.pointerId)) return;
+  const p = ptrs.get(e.pointerId); ptrs.delete(e.pointerId);
+  if (G && G.mode === 'pan' && G.id === e.pointerId && !G.moved && e.type === 'pointerup'){
+    // Doppeltipp: hineinzoomen bzw. zurück zum ganzen Bild
+    if (lastTap && e.timeStamp - lastTap.t < 330 && dist(p, lastTap.p) < 30){
+      if (Z.z > 1.01) Z.z = 1; else zoomAt(p.x, p.y, 3);
+      onZoom(); lastTap = null;
+    } else lastTap = { t: e.timeStamp, p };
+  }
+  if (ptrs.size === 1){ const [[id, q]] = [...ptrs.entries()]; startPan(id, q); G.moved = true; }
+  else if (!ptrs.size) G = null;
+}
+['pointerup', 'pointercancel'].forEach(ev => stage.addEventListener(ev, endPointer));
+stage.addEventListener('wheel', e => {
+  if (!curState()) return; e.preventDefault();
+  const p = stagePt(e); zoomAt(p.x, p.y, Z.z * Math.exp(-e.deltaY * 0.0015)); onZoom();
+}, { passive: false });
+['gesturestart', 'gesturechange', 'gestureend'].forEach(ev => stage.addEventListener(ev, e => e.preventDefault()));
+stage.addEventListener('contextmenu', e => e.preventDefault());
+if (window.ResizeObserver) new ResizeObserver(() => onZoom()).observe(stage);
 
 function updateReadouts(){
   const t = S.tool, cur = curState(); if (!t || !cur) return;
@@ -709,5 +856,6 @@ window.addEventListener('resize', () => { if (S.tool && S.tool.name === 'thresho
 refresh();
 })();
 </script>
+<!-- ======== Bildsegmentierung: Ende ======== -->
 </body>
 </html>
